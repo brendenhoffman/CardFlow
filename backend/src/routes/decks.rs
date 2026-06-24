@@ -10,8 +10,8 @@ use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::errors::AppError;
-use crate::models::{Card, CreateDeck, Deck, UpdateDeck};
-use crate::routes::cards::fetch_card;
+use crate::models::{CreateDeck, Deck, Stack, UpdateDeck};
+use crate::routes::cards::fetch_stack;
 use crate::routes::games::fetch_game;
 
 const MAX_HAND_SIZE: usize = 5;
@@ -133,31 +133,34 @@ struct ReorderRequest {
 async fn deal_hand(
     State(pool): State<SqlitePool>,
     Path(deck_id): Path<String>,
-) -> Result<Json<Vec<Card>>, AppError> {
+) -> Result<Json<Vec<Stack>>, AppError> {
     fetch_deck(&pool, &deck_id).await?;
 
     let mut tx = pool.begin().await?;
 
-    let used = hand_priorities(&mut tx, &deck_id).await?;
-    let open_slots = MAX_HAND_SIZE.saturating_sub(used.len());
+    loop {
+        let used = hand_priorities(&mut tx, &deck_id).await?;
+        if used.len() >= MAX_HAND_SIZE {
+            break;
+        }
 
-    if open_slots > 0 {
-        let candidates: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM cards WHERE deck_id = ? AND status = 'pile' ORDER BY RANDOM() LIMIT ?",
+        let candidate: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM cards WHERE deck_id = ? AND status = 'pile' ORDER BY RANDOM() LIMIT 1",
         )
         .bind(&deck_id)
-        .bind(open_slots as i64)
-        .fetch_all(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
 
-        let priorities = available_priorities(&used, candidates.len());
-        for (card_id, priority) in candidates.iter().zip(priorities) {
-            sqlx::query("UPDATE cards SET status = 'hand', priority = ? WHERE id = ?")
-                .bind(priority)
-                .bind(card_id)
-                .execute(&mut *tx)
-                .await?;
-        }
+        let Some(candidate_id) = candidate else {
+            break;
+        };
+
+        let priority = available_priorities(&used, 1)
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::Conflict("hand is full".into()))?;
+
+        draw_stack_into_hand(&mut tx, &candidate_id, priority).await?;
     }
 
     tx.commit().await?;
@@ -168,19 +171,24 @@ async fn deal_hand(
 async fn draw_card(
     State(pool): State<SqlitePool>,
     Path((deck_id, card_id)): Path<(String, String)>,
-) -> Result<Json<Card>, AppError> {
+) -> Result<Json<Stack>, AppError> {
     fetch_deck(&pool, &deck_id).await?;
 
     let mut tx = pool.begin().await?;
 
-    let card = sqlx::query_as::<_, Card>("SELECT * FROM cards WHERE id = ? AND deck_id = ?")
+    let card_deck_id: Option<String> = sqlx::query_scalar("SELECT deck_id FROM cards WHERE id = ?")
         .bind(&card_id)
-        .bind(&deck_id)
         .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(AppError::NotFound)?;
+        .await?;
+    if card_deck_id.as_deref() != Some(deck_id.as_str()) {
+        return Err(AppError::NotFound);
+    }
 
-    if card.status != "pile" {
+    let card_status: String = sqlx::query_scalar("SELECT status FROM cards WHERE id = ?")
+        .bind(&card_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if card_status != "pile" {
         return Err(AppError::BadRequest("card is not in the pile".into()));
     }
 
@@ -190,22 +198,45 @@ async fn draw_card(
         .next()
         .ok_or_else(|| AppError::Conflict("hand is full".into()))?;
 
-    sqlx::query("UPDATE cards SET status = 'hand', priority = ? WHERE id = ?")
-        .bind(priority)
-        .bind(&card_id)
-        .execute(&mut *tx)
-        .await?;
+    draw_stack_into_hand(&mut tx, &card_id, priority).await?;
 
+    let stack = fetch_stack(&mut tx, &card_id).await?;
     tx.commit().await?;
 
-    Ok(Json(fetch_card(&pool, &card_id).await?))
+    Ok(Json(stack))
+}
+
+/// Walks `root_id`'s joker subtree and pulls every unresolved (not-done) node into
+/// the hand as a single stack: the root gets `priority`, the rest get none.
+async fn draw_stack_into_hand(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    root_id: &str,
+    priority: i64,
+) -> Result<(), AppError> {
+    let nodes = crate::routes::cards::fetch_tree_cards(tx, root_id).await?;
+    for node in nodes {
+        if node.status == "done" {
+            continue;
+        }
+        let node_priority = if node.id == root_id {
+            Some(priority)
+        } else {
+            None
+        };
+        sqlx::query("UPDATE cards SET status = 'hand', priority = ? WHERE id = ?")
+            .bind(node_priority)
+            .bind(&node.id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn reorder_hand(
     State(pool): State<SqlitePool>,
     Path(deck_id): Path<String>,
     Json(payload): Json<ReorderRequest>,
-) -> Result<Json<Vec<Card>>, AppError> {
+) -> Result<Json<Vec<Stack>>, AppError> {
     fetch_deck(&pool, &deck_id).await?;
 
     if payload.order.is_empty() || payload.order.len() > MAX_HAND_SIZE {
@@ -223,13 +254,15 @@ async fn reorder_hand(
 
     let mut tx = pool.begin().await?;
 
-    let hand_ids: HashSet<String> =
-        sqlx::query_scalar("SELECT id FROM cards WHERE deck_id = ? AND status = 'hand'")
-            .bind(&deck_id)
-            .fetch_all(&mut *tx)
-            .await?
-            .into_iter()
-            .collect();
+    // Only stack roots occupy a slot; joker stack members share the root's slot.
+    let hand_ids: HashSet<String> = sqlx::query_scalar(
+        "SELECT id FROM cards WHERE deck_id = ? AND status = 'hand' AND priority IS NOT NULL",
+    )
+    .bind(&deck_id)
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .collect();
 
     let requested_ids: HashSet<String> = payload.order.iter().cloned().collect();
     if requested_ids != hand_ids {
@@ -256,11 +289,12 @@ async fn hand_priorities(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     deck_id: &str,
 ) -> Result<Vec<i64>, AppError> {
-    let priorities =
-        sqlx::query_scalar("SELECT priority FROM cards WHERE deck_id = ? AND status = 'hand'")
-            .bind(deck_id)
-            .fetch_all(&mut **tx)
-            .await?;
+    let priorities = sqlx::query_scalar(
+        "SELECT priority FROM cards WHERE deck_id = ? AND status = 'hand' AND priority IS NOT NULL",
+    )
+    .bind(deck_id)
+    .fetch_all(&mut **tx)
+    .await?;
     Ok(priorities)
 }
 
@@ -271,12 +305,18 @@ fn available_priorities(used: &[i64], needed: usize) -> Vec<i64> {
         .collect()
 }
 
-async fn fetch_hand(pool: &SqlitePool, deck_id: &str) -> Result<Vec<Card>, AppError> {
-    let hand = sqlx::query_as::<_, Card>(
-        "SELECT * FROM cards WHERE deck_id = ? AND status = 'hand' ORDER BY priority ASC",
+async fn fetch_hand(pool: &SqlitePool, deck_id: &str) -> Result<Vec<Stack>, AppError> {
+    let root_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM cards WHERE deck_id = ? AND status = 'hand' AND priority IS NOT NULL ORDER BY priority ASC",
     )
     .bind(deck_id)
     .fetch_all(pool)
     .await?;
+
+    let mut conn = pool.acquire().await?;
+    let mut hand = Vec::with_capacity(root_ids.len());
+    for root_id in root_ids {
+        hand.push(fetch_stack(&mut conn, &root_id).await?);
+    }
     Ok(hand)
 }
