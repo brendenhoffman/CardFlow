@@ -8,3 +8,8 @@ debug
 *.pdb
 **/mutants.out*/
 .claude
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.env
