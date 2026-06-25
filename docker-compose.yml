@@ -6,8 +6,6 @@ services:
     container_name: cardflow-backend
     environment:
       DATABASE_URL: sqlite:///data/cardflow.db
-      # No TLS termination in this default compose setup — set to "true" once
-      # the app is served over HTTPS so the refresh-token cookie requires it.
       COOKIE_SECURE: "false"
     volumes:
       - cardflow-data:/data
@@ -23,7 +21,7 @@ services:
     depends_on:
       - cardflow-backend
     ports:
-      - "3000:80"
+      - "8777:80"
     restart: unless-stopped
 
 volumes:
