@@ -1,7 +1,16 @@
 <script lang="ts">
-	import { ApiError, listGames, createGame, type Game } from '$lib/api';
+	import {
+		ApiError,
+		listGames,
+		createGame,
+		listDecks,
+		createDeck,
+		type Game,
+		type Deck
+	} from '$lib/api';
 	import { sessionUser, sessionReady, login, logout } from '$lib/stores';
-	import GameComponent from '$lib/components/Game.svelte';
+	import TopBar from '$lib/components/TopBar.svelte';
+	import DeckComponent from '$lib/components/Deck.svelte';
 
 	let username = $state('');
 	let password = $state('');
@@ -10,23 +19,37 @@
 	let loggingIn = $state(false);
 
 	let games: Game[] = $state([]);
-	let gamesLoading = $state(true);
 	let gamesError: string | null = $state(null);
 	let selectedGameId: string | null = $state(null);
-	let newGameName = $state('');
-	let creatingGame = $state(false);
 
-	const selectedGame = $derived(games.find((g) => g.id === selectedGameId) ?? null);
+	let decks: Deck[] = $state([]);
+	let decksLoading = $state(false);
+	let decksError: string | null = $state(null);
+	let selectedDeckId: string | null = $state(null);
+
+	const selectedDeck = $derived(decks.find((d) => d.id === selectedDeckId) ?? null);
 
 	async function loadGames() {
-		gamesLoading = true;
 		gamesError = null;
 		try {
 			games = await listGames();
 		} catch (e) {
 			gamesError = e instanceof ApiError ? e.message : 'Failed to load games';
+		}
+	}
+
+	async function loadDecks(gameId: string) {
+		decksLoading = true;
+		decksError = null;
+		try {
+			decks = await listDecks(gameId);
+			if (selectedDeckId && !decks.some((d) => d.id === selectedDeckId)) {
+				selectedDeckId = null;
+			}
+		} catch (e) {
+			decksError = e instanceof ApiError ? e.message : 'Failed to load decks';
 		} finally {
-			gamesLoading = false;
+			decksLoading = false;
 		}
 	}
 
@@ -35,6 +58,38 @@
 			loadGames();
 		}
 	});
+
+	$effect(() => {
+		if (selectedGameId) {
+			loadDecks(selectedGameId);
+		} else {
+			decks = [];
+			selectedDeckId = null;
+		}
+	});
+
+	function handleSelectGame(id: string) {
+		selectedGameId = id;
+	}
+
+	async function handleCreateGame(name: string): Promise<string> {
+		const game = await createGame({ name });
+		games = [...games, game];
+		return game.id;
+	}
+
+	function handleSelectDeck(id: string) {
+		selectedDeckId = id;
+	}
+
+	async function handleCreateDeck(name: string): Promise<string> {
+		if (!selectedGameId) {
+			throw new Error('Select a game first');
+		}
+		const deck = await createDeck(selectedGameId, { name });
+		decks = [...decks, deck];
+		return deck.id;
+	}
 
 	async function handleLogin(event: SubmitEvent) {
 		event.preventDefault();
@@ -50,30 +105,14 @@
 			loggingIn = false;
 		}
 	}
-
-	async function handleCreateGame(event: SubmitEvent) {
-		event.preventDefault();
-		const name = newGameName.trim();
-		if (!name) return;
-		creatingGame = true;
-		gamesError = null;
-		try {
-			const game = await createGame({ name });
-			newGameName = '';
-			await loadGames();
-			selectedGameId = game.id;
-		} catch (e) {
-			gamesError = e instanceof ApiError ? e.message : 'Failed to create game';
-		} finally {
-			creatingGame = false;
-		}
-	}
 </script>
 
-<main>
-	{#if !$sessionReady}
+{#if !$sessionReady}
+	<main class="centered">
 		<p class="loading">Loading…</p>
-	{:else if !$sessionUser}
+	</main>
+{:else if !$sessionUser}
+	<main class="centered">
 		<section class="login">
 			<h1>CardFlow</h1>
 			<form onsubmit={handleLogin}>
@@ -100,70 +139,48 @@
 				<button type="submit" disabled={loggingIn}>Log in</button>
 			</form>
 		</section>
-	{:else}
-		<header class="app-header">
-			<h1>CardFlow</h1>
-			<div class="user-info">
-				<span>{$sessionUser.username ?? $sessionUser.id} &middot; {$sessionUser.role}</span>
-				<button type="button" onclick={() => logout()}>Log out</button>
-			</div>
-		</header>
+	</main>
+{:else}
+	<div class="app-shell">
+		<TopBar
+			{games}
+			{selectedGameId}
+			{decks}
+			{selectedDeckId}
+			deckSelectorDisabled={!selectedGameId}
+			user={$sessionUser}
+			onSelectGame={handleSelectGame}
+			onCreateGame={handleCreateGame}
+			onSelectDeck={handleSelectDeck}
+			onCreateDeck={handleCreateDeck}
+			onLogout={() => logout()}
+		/>
 
-		<div class="layout">
-			<aside class="game-list">
-				<h2>Games</h2>
-				<form onsubmit={handleCreateGame}>
-					<input
-						type="text"
-						placeholder="New game name"
-						bind:value={newGameName}
-						disabled={creatingGame}
-					/>
-					<button type="submit" disabled={creatingGame || !newGameName.trim()}>Add game</button>
-				</form>
+		<main class="board-area">
+			{#if gamesError}
+				<p class="error">{gamesError}</p>
+			{/if}
+			{#if decksError}
+				<p class="error">{decksError}</p>
+			{/if}
 
-				{#if gamesError}
-					<p class="error">{gamesError}</p>
-				{/if}
-				{#if gamesLoading}
-					<p>Loading…</p>
-				{:else if games.length === 0}
-					<p class="empty">No games yet.</p>
-				{:else}
-					<ul>
-						{#each games as game (game.id)}
-							<li>
-								<button
-									type="button"
-									class="game-item"
-									class:selected={game.id === selectedGameId}
-									class:archived={game.status === 'archived'}
-									onclick={() => (selectedGameId = game.id)}
-								>
-									{game.name}
-									<span class="game-status">{game.status}</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</aside>
-
-			<section class="game-view">
-				{#if selectedGame}
-					{#key selectedGame.id}
-						<GameComponent game={selectedGame} />
-					{/key}
-				{:else}
-					<p class="empty">Select a game to see its decks.</p>
-				{/if}
-			</section>
-		</div>
-	{/if}
-</main>
+			{#if selectedDeck}
+				{#key selectedDeck.id}
+					<DeckComponent deck={selectedDeck} />
+				{/key}
+			{:else if !selectedGameId}
+				<p class="empty">Select or create a game above to get started.</p>
+			{:else if decksLoading}
+				<p class="empty">Loading decks…</p>
+			{:else}
+				<p class="empty">Select or create a deck above to see its hand and pile.</p>
+			{/if}
+		</main>
+	</div>
+{/if}
 
 <style>
-	main {
+	.centered {
 		max-width: 1100px;
 		margin: 0 auto;
 		padding: 1.5rem;
@@ -197,66 +214,14 @@
 		color: #b91c1c;
 		margin: 0;
 	}
-	.app-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1.5rem;
-	}
-	.user-info {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		font-size: 0.875rem;
-	}
-	.layout {
-		display: grid;
-		grid-template-columns: 240px 1fr;
-		gap: 1.5rem;
-		align-items: start;
-	}
-	.game-list {
+	.app-shell {
+		min-height: 100vh;
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
 	}
-	.game-list form {
-		display: flex;
-		gap: 0.25rem;
-	}
-	.game-list input {
+	.board-area {
 		flex: 1;
-		min-width: 0;
-	}
-	.game-list ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-	}
-	.game-item {
-		width: 100%;
-		display: flex;
-		justify-content: space-between;
-		gap: 0.5rem;
-		text-align: left;
-		background: transparent;
-		border: 1px solid #ddd;
-		color: inherit;
-	}
-	.game-item.selected {
-		border-color: #6366f1;
-		background: #eef2ff;
-	}
-	.game-item.archived {
-		opacity: 0.6;
-	}
-	.game-status {
-		font-size: 0.7rem;
-		color: #888;
-		text-transform: uppercase;
+		padding: 1.5rem;
 	}
 	.empty {
 		color: #888;

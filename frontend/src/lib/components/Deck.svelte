@@ -14,7 +14,10 @@
 		type Card as CardModel,
 		type Stack
 	} from '$lib/api';
-	import Card from './Card.svelte';
+	import { flattenStackPreorder } from '$lib/stack';
+	import HandCard from './HandCard.svelte';
+	import PileCard from './PileCard.svelte';
+	import CardEditor from './CardEditor.svelte';
 
 	interface Props {
 		deck: Deck;
@@ -29,7 +32,13 @@
 	let showDrawPrompt = $state(false);
 
 	let draggedCardId: string | null = $state(null);
+	let draggedFrom: 'hand' | 'pile' | null = $state(null);
 	let dragOverCardId: string | null = $state(null);
+	let handDropActive = $state(false);
+	let pileDropActive = $state(false);
+
+	let creatingCard = $state(false);
+	let editingCard: CardModel | null = $state(null);
 
 	async function loadDeckState() {
 		loading = true;
@@ -98,12 +107,26 @@
 		}
 	}
 
-	function handleDragStart(cardId: string) {
+	function clearDragState() {
+		draggedCardId = null;
+		draggedFrom = null;
+		dragOverCardId = null;
+		handDropActive = false;
+		pileDropActive = false;
+	}
+
+	function handleHandDragStart(cardId: string) {
 		draggedCardId = cardId;
+		draggedFrom = 'hand';
+	}
+
+	function handlePileDragStart(cardId: string) {
+		draggedCardId = cardId;
+		draggedFrom = 'pile';
 	}
 
 	function handleDragOverCard(cardId: string) {
-		if (cardId !== draggedCardId) {
+		if (draggedFrom === 'hand' && cardId !== draggedCardId) {
 			dragOverCardId = cardId;
 		}
 	}
@@ -113,9 +136,11 @@
 	}
 
 	async function handleDropOnCard(targetCardId: string) {
+		if (draggedFrom !== 'hand') return;
 		dragOverCardId = null;
 		const dragged = draggedCardId;
 		draggedCardId = null;
+		draggedFrom = null;
 		if (!dragged || dragged === targetCardId) {
 			return;
 		}
@@ -138,51 +163,109 @@
 	}
 
 	function handleDragEnd() {
-		draggedCardId = null;
-		dragOverCardId = null;
+		clearDragState();
+	}
+
+	function handleHandAreaDragOver(event: DragEvent) {
+		if (draggedFrom === 'pile') {
+			event.preventDefault();
+			handDropActive = true;
+		}
+	}
+
+	function handleHandAreaDragLeave() {
+		handDropActive = false;
+	}
+
+	async function handleHandAreaDrop(event: DragEvent) {
+		if (draggedFrom !== 'pile' || !draggedCardId) return;
+		event.preventDefault();
+		const cardId = draggedCardId;
+		clearDragState();
+		await handleDraw(cardId);
+	}
+
+	function handlePileAreaDragOver(event: DragEvent) {
+		if (draggedFrom === 'hand') {
+			event.preventDefault();
+			pileDropActive = true;
+		}
+	}
+
+	function handlePileAreaDragLeave() {
+		pileDropActive = false;
+	}
+
+	async function handlePileAreaDrop(event: DragEvent) {
+		if (draggedFrom !== 'hand' || !draggedCardId) return;
+		event.preventDefault();
+		const cardId = draggedCardId;
+		clearDragState();
+		await handleReturn(cardId);
 	}
 
 	async function drawAfterComplete() {
 		showDrawPrompt = false;
 		await handleDeal();
 	}
+
+	function openEditor(cardId: string) {
+		const found =
+			hand
+				.flatMap((s) => flattenStackPreorder(s))
+				.map((s) => s.card)
+				.find((c) => c.id === cardId) ?? pile.find((c) => c.id === cardId);
+		if (found) {
+			editingCard = found;
+		}
+	}
+
+	function handleCardCreated() {
+		void loadDeckState();
+	}
+
+	function handleCardUpdated() {
+		void loadDeckState();
+	}
 </script>
 
 <div class="deck">
-	<header>
-		<h2>{deck.name}</h2>
-		<span class="status status-{deck.status}">{deck.status}</span>
-	</header>
-
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}
 
 	<section class="hand-section">
 		<div class="section-header">
-			<h3>Hand ({hand.length}/5)</h3>
+			<h3>Hand <span class="count">{hand.length}/5</span></h3>
 			<button type="button" onclick={handleDeal} disabled={hand.length >= 5 || pile.length === 0}>
 				Deal
 			</button>
 		</div>
 
-		{#if loading}
-			<p>Loading…</p>
-		{:else if hand.length === 0}
-			<p class="empty">No cards in hand yet. Deal, or draw from the pile below.</p>
-		{:else}
-			<div class="hand">
+		<div
+			class="hand"
+			role="list"
+			class:drop-active={handDropActive}
+			ondragover={handleHandAreaDragOver}
+			ondragleave={handleHandAreaDragLeave}
+			ondrop={handleHandAreaDrop}
+		>
+			{#if loading}
+				<p>Loading…</p>
+			{:else if hand.length === 0}
+				<p class="empty">No cards in hand yet. Deal, or drag a card here from the pile below.</p>
+			{:else}
 				{#each hand as stack (stack.card.id)}
 					<div class="hand-slot" out:fly={{ y: -30, duration: 250 }} animate:flip={{ duration: 200 }}>
-						<Card
+						<HandCard
 							{stack}
 							draggable
-							context="hand"
-							isDragging={draggedCardId === stack.card.id}
+							isDragging={draggedFrom === 'hand' && draggedCardId === stack.card.id}
 							isDragOver={dragOverCardId === stack.card.id}
 							onComplete={handleComplete}
 							onReturn={handleReturn}
-							onDragStart={() => handleDragStart(stack.card.id)}
+							onEdit={openEditor}
+							onDragStart={() => handleHandDragStart(stack.card.id)}
 							onDragOverCard={() => handleDragOverCard(stack.card.id)}
 							onDragLeaveCard={handleDragLeaveCard}
 							onDropOnCard={() => handleDropOnCard(stack.card.id)}
@@ -190,8 +273,8 @@
 						/>
 					</div>
 				{/each}
-			</div>
-		{/if}
+			{/if}
+		</div>
 
 		{#if showDrawPrompt}
 			<div class="draw-prompt" transition:fly={{ y: -10, duration: 150 }}>
@@ -205,40 +288,55 @@
 	</section>
 
 	<section class="pile-section">
-		<h3>Pile ({pile.length})</h3>
-		<div class="pile-list">
+		<div class="section-header">
+			<h3>Pile <span class="count">{pile.length}</span></h3>
+			<button type="button" onclick={() => (creatingCard = true)}>+ New card</button>
+		</div>
+		<div
+			class="pile-grid"
+			role="list"
+			class:drop-active={pileDropActive}
+			ondragover={handlePileAreaDragOver}
+			ondragleave={handlePileAreaDragLeave}
+			ondrop={handlePileAreaDrop}
+		>
 			{#each pile as card (card.id)}
-				<Card stack={{ card, jokers: [] }} context="pile" onDraw={handleDraw} />
+				<PileCard
+					{card}
+					isDragging={draggedFrom === 'pile' && draggedCardId === card.id}
+					onDraw={handleDraw}
+					onEdit={openEditor}
+					onDragStart={() => handlePileDragStart(card.id)}
+					onDragEnd={handleDragEnd}
+				/>
 			{:else}
-				<p class="empty">Pile is empty.</p>
+				<p class="empty">Pile is empty. Add a card to get started.</p>
 			{/each}
 		</div>
 	</section>
 </div>
 
+{#if creatingCard}
+	<CardEditor mode="create" deckId={deck.id} onClose={() => (creatingCard = false)} onCreated={handleCardCreated} />
+{/if}
+
+{#if editingCard}
+	{#key editingCard.id}
+		<CardEditor
+			mode="edit"
+			deckId={deck.id}
+			card={editingCard}
+			onClose={() => (editingCard = null)}
+			onUpdated={handleCardUpdated}
+		/>
+	{/key}
+{/if}
+
 <style>
 	.deck {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
-	}
-	header {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-	}
-	header h2 {
-		margin: 0;
-	}
-	.status {
-		font-size: 0.75rem;
-		padding: 0.1rem 0.5rem;
-		border-radius: 1rem;
-		background: #eee;
-		text-transform: uppercase;
-	}
-	.status-archived {
-		opacity: 0.6;
+		gap: 2rem;
 	}
 	.error {
 		color: #b91c1c;
@@ -247,11 +345,40 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		margin-bottom: 0.75rem;
+	}
+	.section-header h3 {
+		margin: 0;
+		font-size: 1.15rem;
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+	}
+	.count {
+		font-size: 0.8rem;
+		font-weight: 400;
+		color: #888;
+	}
+	.pile-section {
+		display: flex;
+		flex-direction: column;
 	}
 	.hand {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-		gap: 0.75rem;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		gap: 1.25rem;
+		width: fit-content;
+		max-width: 100%;
+		min-height: 280px;
+		padding: 0.75rem;
+		border-radius: 0.75rem;
+		border: 2px dashed transparent;
+		transition: border-color 0.15s ease, background-color 0.15s ease;
+	}
+	.hand.drop-active {
+		border-color: #6366f1;
+		background: #eef2ff;
 	}
 	.empty {
 		color: #888;
@@ -265,6 +392,7 @@
 		border: 1px solid #c7d2fe;
 		border-radius: 0.5rem;
 		padding: 0.5rem 0.75rem;
+		margin-top: 0.75rem;
 	}
 	.draw-prompt p {
 		margin: 0;
@@ -275,19 +403,19 @@
 		border: 1px solid #ccc;
 		color: #333;
 	}
-	.pile-section {
+	.pile-grid {
 		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
+		flex-wrap: wrap;
+		gap: 0.85rem;
+		align-content: start;
+		min-height: 100px;
+		padding: 0.75rem;
+		border-radius: 0.75rem;
+		border: 2px dashed transparent;
+		transition: border-color 0.15s ease, background-color 0.15s ease;
 	}
-	.pile-list {
-		max-height: 320px;
-		overflow-y: auto;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		padding: 0.25rem;
-		border: 1px solid #eee;
-		border-radius: 0.5rem;
+	.pile-grid.drop-active {
+		border-color: #6366f1;
+		background: #eef2ff;
 	}
 </style>
