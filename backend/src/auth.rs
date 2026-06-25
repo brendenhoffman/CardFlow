@@ -1,4 +1,7 @@
-use argon2::password_hash::rand_core::OsRng;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use chrono::Utc;
@@ -14,6 +17,7 @@ use crate::models::User;
 pub const ACCESS_TOKEN_TTL_SECONDS: i64 = 15 * 60;
 pub const REFRESH_TOKEN_TTL_DAYS: i64 = 7;
 const TOTP_ISSUER: &str = "CardFlow";
+const JWT_SECRET_FILENAME: &str = ".jwt_secret";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -30,10 +34,44 @@ pub struct CurrentUser {
     pub role: String,
 }
 
+static JWT_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+
+fn jwt_secret_path(database_url: &str) -> PathBuf {
+    let path_part = database_url.trim_start_matches("sqlite://");
+    let dir = Path::new(path_part)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    dir.join(JWT_SECRET_FILENAME)
+}
+
+/// Loads the JWT signing secret from disk, generating and persisting a new
+/// random one on first boot. Must be called once at startup, before the
+/// server accepts any requests.
+pub fn init_jwt_secret(database_url: &str) -> anyhow::Result<()> {
+    let path = jwt_secret_path(database_url);
+    let secret = if path.exists() {
+        std::fs::read(&path)?
+    } else {
+        let mut bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut bytes);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, &bytes)?;
+        bytes.to_vec()
+    };
+    JWT_SECRET
+        .set(secret)
+        .map_err(|_| anyhow::anyhow!("jwt secret already initialized"))?;
+    Ok(())
+}
+
 pub fn jwt_secret() -> Result<Vec<u8>, AppError> {
-    std::env::var("JWT_SECRET")
-        .map(|s| s.into_bytes())
-        .map_err(|_| AppError::Internal("JWT_SECRET is not configured".into()))
+    JWT_SECRET
+        .get()
+        .cloned()
+        .ok_or_else(|| AppError::Internal("JWT secret not initialized".into()))
 }
 
 pub fn cookie_secure() -> bool {

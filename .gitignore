@@ -13,3 +13,4 @@ debug
 *.db-shm
 *.db-wal
 .env
+.jwt_secret

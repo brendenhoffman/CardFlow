@@ -133,6 +133,15 @@ export interface MfaVerifyRequest {
 	code: string;
 }
 
+export interface SetupStatus {
+	required: boolean;
+}
+
+export interface SetupRequest {
+	username: string;
+	password: string;
+}
+
 // ---------------------------------------------------------------------------
 // Core fetch plumbing: auth header injection, JSON (de)serialization,
 // {error} body surfacing, and one automatic refresh-and-retry on a 401.
@@ -232,6 +241,18 @@ async function apiFetch<T>(path: string, init: RequestInit = {}, isRetry = false
 		return apiFetch<T>(path, init, true);
 	}
 	return throwApiError(res);
+}
+
+// ---------------------------------------------------------------------------
+// First-run setup
+// ---------------------------------------------------------------------------
+
+export function getSetupStatus(): Promise<SetupStatus> {
+	return apiFetch('/setup/status');
+}
+
+export function runSetup(payload: SetupRequest): Promise<UserView> {
+	return apiFetch('/setup', withBody('POST', payload));
 }
 
 // ---------------------------------------------------------------------------
