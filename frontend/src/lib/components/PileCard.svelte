@@ -6,11 +6,20 @@
 		isDragging?: boolean;
 		onDraw?: (cardId: string) => void;
 		onEdit?: (cardId: string) => void;
+		onViewDescription?: (cardId: string) => void;
 		onDragStart?: () => void;
 		onDragEnd?: () => void;
 	}
 
-	let { card, isDragging = false, onDraw, onEdit, onDragStart, onDragEnd }: Props = $props();
+	let {
+		card,
+		isDragging = false,
+		onDraw,
+		onEdit,
+		onViewDescription,
+		onDragStart,
+		onDragEnd
+	}: Props = $props();
 </script>
 
 <div
@@ -38,7 +47,7 @@
 		<button
 			type="button"
 			class="description"
-			onclick={() => onEdit?.(card.id)}
+			onclick={() => onViewDescription?.(card.id)}
 			title="View full description"
 		>
 			{card.description}

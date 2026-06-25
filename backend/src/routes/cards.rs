@@ -15,6 +15,7 @@ use crate::routes::decks::fetch_deck;
 pub fn router() -> Router<SqlitePool> {
     Router::new()
         .route("/decks/:deck_id/cards", get(list_cards).post(create_card))
+        .route("/decks/:deck_id/jokers", get(list_deck_jokers))
         .route(
             "/cards/:id",
             get(get_card).patch(update_card).delete(delete_card),
@@ -253,6 +254,27 @@ async fn list_jokers(
     .await?;
 
     Ok(Json(jokers))
+}
+
+/// Every joker dependency edge for cards in this deck, so clients can build the
+/// full dependency graph locally (e.g. to validate which cards are safe to add
+/// as a joker for a given card without walking the API node-by-node).
+async fn list_deck_jokers(
+    State(pool): State<SqlitePool>,
+    Path(deck_id): Path<String>,
+) -> Result<Json<Vec<CardJoker>>, AppError> {
+    fetch_deck(&pool, &deck_id).await?;
+
+    let edges = sqlx::query_as::<_, CardJoker>(
+        r#"SELECT cj.* FROM card_jokers cj
+           JOIN cards c ON c.id = cj.card_id
+           WHERE c.deck_id = ?"#,
+    )
+    .bind(&deck_id)
+    .fetch_all(&pool)
+    .await?;
+
+    Ok(Json(edges))
 }
 
 async fn create_joker(

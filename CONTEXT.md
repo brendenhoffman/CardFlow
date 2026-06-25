@@ -198,7 +198,7 @@ PATCH  /decks/:deck_id/reorder     -- body: { order: [card_id, ...] } length 1-5
 
 ## Auth Design
 
-- JWT short expiry (15 min), refresh token in HttpOnly cookie (7 days), both stored/validated against SQLite
+- JWT expiry (2 hours), refresh token in HttpOnly cookie (7 days), both stored/validated against SQLite. Frontend silently refreshes the access token shortly before it expires so an open tab is never logged out before the refresh token's 7-day boundary.
 - TOTP via RFC 6238 (compatible with Google Authenticator, Aegis, etc.)
 - No public signup — admin creates users via `POST /users` or a CLI command
 - MFA is optional per user but can be made required by admin policy (future)

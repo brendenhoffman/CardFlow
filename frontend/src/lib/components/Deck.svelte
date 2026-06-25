@@ -18,6 +18,7 @@
 	import HandCard from './HandCard.svelte';
 	import PileCard from './PileCard.svelte';
 	import CardEditor from './CardEditor.svelte';
+	import CardDetailModal from './CardDetailModal.svelte';
 
 	interface Props {
 		deck: Deck;
@@ -39,6 +40,7 @@
 
 	let creatingCard = $state(false);
 	let editingCard: CardModel | null = $state(null);
+	let viewingCard: CardModel | null = $state(null);
 
 	async function loadDeckState() {
 		loading = true;
@@ -209,14 +211,26 @@
 		await handleDeal();
 	}
 
-	function openEditor(cardId: string) {
-		const found =
+	function findCard(cardId: string): CardModel | null {
+		return (
 			hand
 				.flatMap((s) => flattenStackPreorder(s))
 				.map((s) => s.card)
-				.find((c) => c.id === cardId) ?? pile.find((c) => c.id === cardId);
+				.find((c) => c.id === cardId) ?? pile.find((c) => c.id === cardId) ?? null
+		);
+	}
+
+	function openEditor(cardId: string) {
+		const found = findCard(cardId);
 		if (found) {
 			editingCard = found;
+		}
+	}
+
+	function openDescription(cardId: string) {
+		const found = findCard(cardId);
+		if (found) {
+			viewingCard = found;
 		}
 	}
 
@@ -265,6 +279,7 @@
 							onComplete={handleComplete}
 							onReturn={handleReturn}
 							onEdit={openEditor}
+							onViewDescription={openDescription}
 							onDragStart={() => handleHandDragStart(stack.card.id)}
 							onDragOverCard={() => handleDragOverCard(stack.card.id)}
 							onDragLeaveCard={handleDragLeaveCard}
@@ -306,6 +321,7 @@
 					isDragging={draggedFrom === 'pile' && draggedCardId === card.id}
 					onDraw={handleDraw}
 					onEdit={openEditor}
+					onViewDescription={openDescription}
 					onDragStart={() => handlePileDragStart(card.id)}
 					onDragEnd={handleDragEnd}
 				/>
@@ -330,6 +346,10 @@
 			onUpdated={handleCardUpdated}
 		/>
 	{/key}
+{/if}
+
+{#if viewingCard}
+	<CardDetailModal card={viewingCard} onClose={() => (viewingCard = null)} />
 {/if}
 
 <style>

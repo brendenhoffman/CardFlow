@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::errors::AppError;
 use crate::models::User;
 
-pub const ACCESS_TOKEN_TTL_SECONDS: i64 = 15 * 60;
+pub const ACCESS_TOKEN_TTL_SECONDS: i64 = 2 * 60 * 60;
 pub const REFRESH_TOKEN_TTL_DAYS: i64 = 7;
 const TOTP_ISSUER: &str = "CardFlow";
 const JWT_SECRET_FILENAME: &str = ".jwt_secret";

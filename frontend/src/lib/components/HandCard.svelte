@@ -10,6 +10,7 @@
 		onComplete?: (cardId: string) => void;
 		onReturn?: (cardId: string) => void;
 		onEdit?: (cardId: string) => void;
+		onViewDescription?: (cardId: string) => void;
 		onDragStart?: () => void;
 		onDragOverCard?: () => void;
 		onDragLeaveCard?: () => void;
@@ -25,6 +26,7 @@
 		onComplete,
 		onReturn,
 		onEdit,
+		onViewDescription,
 		onDragStart,
 		onDragOverCard,
 		onDragLeaveCard,
@@ -127,7 +129,7 @@
 				<button
 					type="button"
 					class="description"
-					onclick={() => onEdit?.(front.card.id)}
+					onclick={() => onViewDescription?.(front.card.id)}
 					title="View full description"
 				>
 					{front.card.description}

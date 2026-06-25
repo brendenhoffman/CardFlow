@@ -5,9 +5,11 @@
 		updateCard,
 		listCards,
 		listJokers,
+		listDeckJokers,
 		addJoker,
 		removeJoker,
-		type Card
+		type Card,
+		type CardJoker
 	} from '$lib/api';
 
 	interface Props {
@@ -29,14 +31,45 @@
 
 	let allCards: Card[] = $state([]);
 	let assignedJokers: Card[] = $state([]);
+	let edges: CardJoker[] = $state([]);
 	let jokersLoading = $state(mode === 'edit');
 	let jokerError: string | null = $state(null);
 	let search = $state('');
 
+	/** IDs reachable from `startId` by following `card_id -> joker_id` edges in `direction`. */
+	function reachableIds(startId: string, direction: 'forward' | 'backward'): Set<string> {
+		const adjacency = new Map<string, string[]>();
+		for (const edge of edges) {
+			const [from, to] = direction === 'forward' ? [edge.card_id, edge.joker_id] : [edge.joker_id, edge.card_id];
+			const list = adjacency.get(from) ?? [];
+			list.push(to);
+			adjacency.set(from, list);
+		}
+		const visited = new Set<string>();
+		const queue = [...(adjacency.get(startId) ?? [])];
+		while (queue.length > 0) {
+			const next = queue.shift()!;
+			if (visited.has(next)) continue;
+			visited.add(next);
+			queue.push(...(adjacency.get(next) ?? []));
+		}
+		return visited;
+	}
+
+	// Cards this card already depends on (directly or transitively) — adding one of
+	// these again as a direct joker would be redundant, since it's already "below"
+	// this card in the tree.
+	const descendantIds = $derived(card ? reachableIds(card.id, 'forward') : new Set<string>());
+	// Cards that already depend on this card (directly or transitively) — adding one
+	// of these as a joker would create a dependency cycle, since it's already
+	// "above" this card in the tree.
+	const ancestorIds = $derived(card ? reachableIds(card.id, 'backward') : new Set<string>());
+
 	const availableCards = $derived(
 		allCards.filter((c) => {
 			if (card && c.id === card.id) return false;
-			if (assignedJokers.some((j) => j.id === c.id)) return false;
+			if (descendantIds.has(c.id)) return false;
+			if (ancestorIds.has(c.id)) return false;
 			const q = search.trim().toLowerCase();
 			return q === '' || c.title.toLowerCase().includes(q);
 		})
@@ -47,9 +80,14 @@
 		jokersLoading = true;
 		jokerError = null;
 		try {
-			const [cards, jokers] = await Promise.all([listCards(deckId), listJokers(card.id)]);
+			const [cards, jokers, deckEdges] = await Promise.all([
+				listCards(deckId),
+				listJokers(card.id),
+				listDeckJokers(deckId)
+			]);
 			allCards = cards;
 			assignedJokers = jokers;
+			edges = deckEdges;
 		} catch (e) {
 			jokerError = e instanceof ApiError ? e.message : 'Failed to load jokers';
 		} finally {
@@ -97,7 +135,9 @@
 		jokerError = null;
 		try {
 			await addJoker(card.id, candidateId);
-			assignedJokers = await listJokers(card.id);
+			const [jokers, deckEdges] = await Promise.all([listJokers(card.id), listDeckJokers(deckId)]);
+			assignedJokers = jokers;
+			edges = deckEdges;
 			search = '';
 		} catch (e) {
 			jokerError = e instanceof ApiError ? e.message : 'Failed to add joker';
@@ -110,6 +150,7 @@
 		try {
 			await removeJoker(card.id, jokerId);
 			assignedJokers = assignedJokers.filter((j) => j.id !== jokerId);
+			edges = await listDeckJokers(deckId);
 		} catch (e) {
 			jokerError = e instanceof ApiError ? e.message : 'Failed to remove joker';
 		}

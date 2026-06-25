@@ -193,6 +193,9 @@ async function parseBody<T>(res: Response): Promise<T> {
 /** Dispatched when a request comes back 401 even after a refresh attempt. */
 export const SESSION_EXPIRED_EVENT = 'cardflow:session-expired';
 
+/** Dispatched whenever the access token is rotated, with the new token as detail. */
+export const TOKEN_REFRESHED_EVENT = 'cardflow:token-refreshed';
+
 async function throwApiError(res: Response): Promise<never> {
 	let message = res.statusText || `request failed with status ${res.status}`;
 	try {
@@ -211,15 +214,28 @@ async function throwApiError(res: Response): Promise<never> {
 
 let refreshPromise: Promise<boolean> | null = null;
 
-/** De-dupes concurrent refresh attempts so a token rotation never races itself. */
-function tryRefresh(): Promise<boolean> {
+/**
+ * De-dupes concurrent refresh attempts so a token rotation never races itself —
+ * the refresh token is rotated server-side on every call, so two in-flight
+ * refreshes would have the second fail against an already-revoked cookie.
+ * Shared by the reactive (401-triggered) and proactive (pre-expiry timer) paths.
+ */
+export function tryRefresh(): Promise<boolean> {
 	if (!refreshPromise) {
 		refreshPromise = (async () => {
 			try {
 				const res = await rawFetch('/auth/refresh', { method: 'POST' });
-				if (!res.ok) return false;
+				if (!res.ok) {
+					if (res.status === 401 && typeof window !== 'undefined') {
+						window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+					}
+					return false;
+				}
 				const data = await parseBody<SessionResponse>(res);
 				setAccessToken(data.access_token);
+				if (typeof window !== 'undefined') {
+					window.dispatchEvent(new CustomEvent(TOKEN_REFRESHED_EVENT, { detail: data.access_token }));
+				}
 				return true;
 			} catch {
 				return false;
@@ -377,6 +393,11 @@ export function deleteCard(id: string): Promise<void> {
 
 export function listJokers(cardId: string): Promise<Card[]> {
 	return apiFetch(`/cards/${encodeURIComponent(cardId)}/jokers`);
+}
+
+/** Every joker dependency edge for cards in this deck, for building the full dependency graph client-side. */
+export function listDeckJokers(deckId: string): Promise<CardJoker[]> {
+	return apiFetch(`/decks/${encodeURIComponent(deckId)}/jokers`);
 }
 
 export function addJoker(cardId: string, jokerId: string): Promise<CardJoker> {
