@@ -1,0 +1,11 @@
+**/node_modules
+**/target
+**/.svelte-kit
+**/build
+.git
+.env
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.jwt_secret
