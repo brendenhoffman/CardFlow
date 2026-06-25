@@ -18,6 +18,9 @@ dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 argon2 = "0.5"
+password-hash = { version = "0.5", features = ["getrandom"] }
 totp-rs = { version = "5", features = ["gen_secret", "qr"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
 jsonwebtoken = "9"
+sha2 = "0.10"
+time = "0.3"
