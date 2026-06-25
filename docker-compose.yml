@@ -10,7 +10,7 @@ services:
     volumes:
       - cardflow-data:/data
     ports:
-      - "3001:3001"
+      - "8778:3001"
     restart: unless-stopped
 
   cardflow-frontend:
