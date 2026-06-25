@@ -16,3 +16,46 @@ The one twist is **jokers** — a dependency system that lets you attach prerequ
 - **Frontend** — Svelte, TypeScript
 - **Auth** — JWT with TOTP MFA support
 - Self-hosted, runs in Docker
+
+## Installation
+
+Pull the published images and run with Docker Compose — no cloning the repo, no build step.
+
+```yaml
+services:
+  cardflow-backend:
+    image: ghcr.io/brendenhoffman/cardflow-backend:latest
+    container_name: cardflow-backend
+    environment:
+      DATABASE_URL: sqlite:///data/cardflow.db
+      # No TLS termination in this default setup — set to "true" once the
+      # app is served over HTTPS so the refresh-token cookie requires it.
+      COOKIE_SECURE: "false"
+    volumes:
+      - cardflow-data:/data
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  cardflow-frontend:
+    image: ghcr.io/brendenhoffman/cardflow-frontend:latest
+    container_name: cardflow-frontend
+    depends_on:
+      - cardflow-backend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+volumes:
+  cardflow-data:
+```
+
+Save that as `docker-compose.yml`, then:
+
+```sh
+docker compose up -d
+```
+
+Visit `http://localhost:3000` and follow the first-run setup screen to create your admin account. The JWT signing secret is generated automatically on first boot and persisted in the `cardflow-data` volume alongside the SQLite database, so both survive restarts and upgrades.
+
+> Images are published by CI on every push to `main`. If they're still private on GHCR, run `docker login ghcr.io` before pulling, or flip the packages to public under the repo's package settings.
