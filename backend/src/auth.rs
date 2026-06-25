@@ -58,7 +58,7 @@ pub fn init_jwt_secret(database_url: &str) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, &bytes)?;
+        std::fs::write(&path, bytes)?;
         bytes.to_vec()
     };
     JWT_SECRET
