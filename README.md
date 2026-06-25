@@ -57,5 +57,3 @@ docker compose up -d
 ```
 
 Visit `http://localhost:3000` and follow the first-run setup screen to create your admin account. The JWT signing secret is generated automatically on first boot and persisted in the `cardflow-data` volume alongside the SQLite database, so both survive restarts and upgrades.
-
-> Images are published by CI on every push to `main`. If they're still private on GHCR, run `docker login ghcr.io` before pulling, or flip the packages to public under the repo's package settings.
