@@ -1,0 +1,46 @@
+:root {
+	font-family:
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		sans-serif;
+	color-scheme: light;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: #f8f9fb;
+	color: #1f2430;
+}
+
+button {
+	cursor: pointer;
+	border: none;
+	border-radius: 0.375rem;
+	padding: 0.4rem 0.75rem;
+	background: #6366f1;
+	color: white;
+	font-size: 0.875rem;
+}
+
+button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+input {
+	border: 1px solid #ccc;
+	border-radius: 0.375rem;
+	padding: 0.4rem 0.5rem;
+	font-size: 0.875rem;
+}
+
+h1,
+h2,
+h3 {
+	font-weight: 600;
+}
