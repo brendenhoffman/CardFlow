@@ -331,9 +331,7 @@ async fn create_joker(
         .await
         .map_err(|e| match &e {
             sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
-                AppError::Conflict(format!(
-                    "card already has a joker at order {order}"
-                ))
+                AppError::Conflict(format!("card already has a joker at order {order}"))
             }
             _ => AppError::Database(e),
         })?;

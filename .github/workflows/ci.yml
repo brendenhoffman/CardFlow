@@ -38,6 +38,28 @@ jobs:
         working-directory: backend
         run: cargo test
 
+  mcp:
+    name: MCP server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mcp
+
+      - name: Format check
+        working-directory: mcp
+        run: cargo fmt --check
+
+      - name: Build
+        working-directory: mcp
+        run: cargo build
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

@@ -43,6 +43,21 @@ services:
       - "8777:80"
     restart: unless-stopped
 
+  # Optional: MCP server for AI agents (Claude, etc.) to manage games/decks/cards.
+  cardflow-mcp:
+    image: ghcr.io/brendenhoffman/cardflow-mcp:latest
+    container_name: cardflow-mcp
+    environment:
+      CARDFLOW_URL: http://cardflow-backend:3001
+      # Generate this from the Cardflow UI under Settings (profile/settings) after first boot
+      CARDFLOW_TOKEN: <your-api-token>
+      MCP_PORT: 3778
+    depends_on:
+      - cardflow-backend
+    ports:
+      - "3778:3778"
+    restart: unless-stopped
+
 volumes:
   cardflow-data:
 ```

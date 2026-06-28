@@ -11,11 +11,9 @@ use crate::errors::AppError;
 use crate::models::{ApiToken, ApiTokenView, CreateApiToken, CreateApiTokenResponse};
 
 pub fn router() -> Router<SqlitePool> {
-    Router::new().route(
-        "/api-tokens",
-        get(list_api_tokens).post(create_api_token),
-    )
-    .route("/api-tokens/:id", axum::routing::delete(delete_api_token))
+    Router::new()
+        .route("/api-tokens", get(list_api_tokens).post(create_api_token))
+        .route("/api-tokens/:id", axum::routing::delete(delete_api_token))
 }
 
 async fn list_api_tokens(
