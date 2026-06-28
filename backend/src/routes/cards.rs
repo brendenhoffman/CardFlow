@@ -309,21 +309,34 @@ async fn create_joker(
         ));
     }
 
-    let next_order: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(\"order\"), 0) + 1 FROM card_jokers WHERE card_id = ?",
-    )
-    .bind(&id)
-    .fetch_one(&mut *tx)
-    .await?;
+    let order = match payload.order {
+        Some(order) => order,
+        None => {
+            sqlx::query_scalar(
+                "SELECT COALESCE(MAX(\"order\"), 0) + 1 FROM card_jokers WHERE card_id = ?",
+            )
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await?
+        }
+    };
 
     let joker_edge_id = Uuid::new_v4().to_string();
     sqlx::query(r#"INSERT INTO card_jokers (id, card_id, joker_id, "order") VALUES (?, ?, ?, ?)"#)
         .bind(&joker_edge_id)
         .bind(&id)
         .bind(&payload.joker_id)
-        .bind(next_order)
+        .bind(order)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(|e| match &e {
+            sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
+                AppError::Conflict(format!(
+                    "card already has a joker at order {order}"
+                ))
+            }
+            _ => AppError::Database(e),
+        })?;
 
     tx.commit().await?;
 

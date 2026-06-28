@@ -55,6 +55,7 @@
 	</div>
 	<div class="user-info">
 		<span>{user.username ?? user.id} &middot; {user.role}</span>
+		<a href="/settings" class="settings-link">Settings</a>
 		<button type="button" class="logout" onclick={onLogout}>Log out</button>
 	</div>
 </header>
@@ -96,5 +97,14 @@
 	}
 	.logout:hover {
 		background: #312e81;
+	}
+	.settings-link {
+		color: #c7d2fe;
+		font-size: 0.8rem;
+		text-decoration: none;
+	}
+	.settings-link:hover {
+		color: #fff;
+		text-decoration: underline;
 	}
 </style>

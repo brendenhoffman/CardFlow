@@ -122,6 +122,14 @@ pub fn verify_access_token(token: &str, secret: &[u8]) -> Result<Claims, AppErro
     .map_err(|_| AppError::Unauthorized("invalid or expired access token".into()))
 }
 
+/// Long-lived API token (e.g. for the MCP server). Prefixed so tokens are
+/// recognizable at a glance in logs/configs; hashed with argon2 before storage,
+/// same as a password, since unlike the refresh token it's not looked up by an
+/// indexed hash but verified by scanning (see `middleware::require_auth`).
+pub fn generate_api_token() -> String {
+    format!("cfat_{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
 pub fn generate_refresh_token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }

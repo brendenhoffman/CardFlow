@@ -111,6 +111,20 @@ export interface UpdateUser {
 	role?: UserRole;
 }
 
+export interface ApiTokenView {
+	id: string;
+	name: string;
+	created_at: string;
+	last_used_at: string | null;
+}
+
+export interface CreateApiTokenResponse {
+	id: string;
+	name: string;
+	token: string;
+	created_at: string;
+}
+
 export interface LoginRequest {
 	username: string;
 	password: string;
@@ -438,4 +452,21 @@ export function returnCard(cardId: string): Promise<Card[]> {
 
 export function reorderHand(deckId: string, order: string[]): Promise<Stack[]> {
 	return apiFetch(`/decks/${encodeURIComponent(deckId)}/reorder`, withBody('PATCH', { order }));
+}
+
+// ---------------------------------------------------------------------------
+// API tokens (long-lived, e.g. for the MCP server)
+// ---------------------------------------------------------------------------
+
+export function listApiTokens(): Promise<ApiTokenView[]> {
+	return apiFetch('/api-tokens');
+}
+
+/** The raw token is only ever present in this response — it cannot be retrieved again. */
+export function createApiToken(name: string): Promise<CreateApiTokenResponse> {
+	return apiFetch('/api-tokens', withBody('POST', { name }));
+}
+
+export function deleteApiToken(id: string): Promise<void> {
+	return apiFetch(`/api-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

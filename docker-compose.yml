@@ -24,5 +24,23 @@ services:
       - "8777:80"
     restart: unless-stopped
 
+  # MCP server for AI agents. CARDFLOW_TOKEN must be created via Settings ->
+  # API tokens in the running app, then set here (e.g. in a .env file) before
+  # this service can start.
+  cardflow-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: cardflow-mcp
+    environment:
+      CARDFLOW_URL: http://cardflow-backend:3001
+      CARDFLOW_TOKEN: ${CARDFLOW_TOKEN}
+      MCP_PORT: 3778
+    depends_on:
+      - cardflow-backend
+    ports:
+      - "${MCP_PORT:-3778}:3778"
+    restart: unless-stopped
+
 volumes:
   cardflow-data:

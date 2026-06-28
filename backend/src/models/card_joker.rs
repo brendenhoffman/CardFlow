@@ -14,6 +14,10 @@ pub struct CardJoker {
 #[derive(Debug, Deserialize)]
 pub struct CreateJoker {
     pub joker_id: String,
+    /// Explicit sequence position among the card's existing jokers. Omit to
+    /// auto-append after the current last joker (the default behavior).
+    #[serde(default)]
+    pub order: Option<i64>,
 }
 
 /// Nested view of a card and its joker subtree, for collapsed/expanded UI rendering.

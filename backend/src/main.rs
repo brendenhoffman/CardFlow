@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(routes::games::router())
         .merge(routes::decks::router())
         .merge(routes::cards::router())
+        .merge(routes::api_tokens::router())
         .layer(axum::middleware::from_fn_with_state(
             pool.clone(),
             middleware::require_auth,

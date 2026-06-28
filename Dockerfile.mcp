@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+
+# ---- build stage ----
+FROM rust:1-slim-bookworm AS build
+WORKDIR /app
+
+COPY mcp/Cargo.toml mcp/Cargo.lock ./
+COPY mcp/src ./src
+RUN cargo build --release
+
+# ---- final stage ----
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 cardflow
+
+COPY --from=build /app/target/release/cardflow-mcp /usr/local/bin/cardflow-mcp
+
+USER cardflow
+WORKDIR /home/cardflow
+EXPOSE 3778
+
+CMD ["cardflow-mcp"]
