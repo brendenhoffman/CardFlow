@@ -32,7 +32,9 @@ async fn main() -> anyhow::Result<()> {
     let mcp_service = StreamableHttpService::new(
         move || Ok(CardflowMcpServer::new(client.clone())),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
+        StreamableHttpServerConfig::default()
+            .with_cancellation_token(ct.child_token())
+            .with_allowed_hosts(allowed_hosts()),
     );
 
     let mut router = axum::Router::new().nest_service("/mcp", mcp_service);
@@ -75,23 +77,28 @@ async fn main() -> anyhow::Result<()> {
 /// /authorize and /token are pure proxies to the backend, which holds its own
 /// copy of the same two values and does the real validation. They're read
 /// here only as a presence signal for this all-or-nothing startup gate.
+///
+/// MCP_PUBLIC_URL doubles as the source for the allowed Host header (see
+/// `allowed_hosts`), which is useful even without OAuth -- so "OAuth wanted
+/// at all" is judged by the other three vars, not this one. Setting only
+/// MCP_PUBLIC_URL (for the Host header fix, on a deployment that otherwise
+/// just uses CARDFLOW_TOKEN) is intentionally not an error.
 fn build_oauth_state(cardflow_url: &str) -> anyhow::Result<Option<OAuthState>> {
     let client_id = non_empty_env("OAUTH_CLIENT_ID");
     let client_secret = non_empty_env("OAUTH_CLIENT_SECRET");
     let mcp_public_url = non_empty_env("MCP_PUBLIC_URL");
     let cardflow_public_url = non_empty_env("CARDFLOW_PUBLIC_URL");
 
-    let present = [
+    let oauth_specific_present = [
         client_id.is_some(),
         client_secret.is_some(),
-        mcp_public_url.is_some(),
         cardflow_public_url.is_some(),
     ];
 
-    if !present.iter().any(|p| *p) {
+    if !oauth_specific_present.iter().any(|p| *p) {
         return Ok(None);
     }
-    if !present.iter().all(|p| *p) {
+    if !oauth_specific_present.iter().all(|p| *p) || mcp_public_url.is_none() {
         anyhow::bail!(
             "OAuth is partially configured: OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, MCP_PUBLIC_URL, \
              and CARDFLOW_PUBLIC_URL must all be set together to enable it, or all left unset to disable it"
@@ -108,4 +115,34 @@ fn build_oauth_state(cardflow_url: &str) -> anyhow::Result<Option<OAuthState>> {
 
 fn non_empty_env(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
+}
+
+/// rmcp's Streamable HTTP transport rejects requests whose `Host` header isn't
+/// on an allowlist (DNS-rebinding protection), defaulting to loopback only --
+/// which rejects every request once this server is reachable under its real
+/// public hostname. Extend that default with the host parsed from
+/// MCP_PUBLIC_URL, if set, rather than adding a separate env var for it. An
+/// allowed entry with no port matches that host on any port, so only the
+/// bare hostname is needed.
+fn allowed_hosts() -> Vec<String> {
+    let mut hosts = vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ];
+
+    if let Some(mcp_public_url) = non_empty_env("MCP_PUBLIC_URL") {
+        match url::Url::parse(&mcp_public_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+        {
+            Some(host) => hosts.push(host),
+            None => tracing::warn!(
+                "MCP_PUBLIC_URL ({mcp_public_url}) could not be parsed for its hostname; \
+                 only loopback Host headers will be accepted"
+            ),
+        }
+    }
+
+    hosts
 }
