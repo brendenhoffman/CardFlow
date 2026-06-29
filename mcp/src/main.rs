@@ -4,7 +4,9 @@ mod tools;
 
 use std::net::SocketAddr;
 
-use rmcp::transport::sse_server::{SseServer, SseServerConfig};
+use rmcp::transport::streamable_http_server::{
+    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+};
 use tokio_util::sync::CancellationToken;
 
 use cardflow_client::CardflowClient;
@@ -26,52 +28,43 @@ async fn main() -> anyhow::Result<()> {
     let client = CardflowClient::new(cardflow_url.clone(), cardflow_token);
     let oauth_state = build_oauth_state(&cardflow_url)?;
 
-    let bind: SocketAddr = ([0, 0, 0, 0], mcp_port).into();
-    let config = SseServerConfig {
-        bind,
-        sse_path: "/sse".to_string(),
-        post_path: "/message".to_string(),
-        ct: CancellationToken::new(),
-        sse_keep_alive: None,
-    };
+    let ct = CancellationToken::new();
+    let mcp_service = StreamableHttpService::new(
+        move || Ok(CardflowMcpServer::new(client.clone())),
+        LocalSessionManager::default().into(),
+        StreamableHttpServerConfig::default().with_cancellation_token(ct.child_token()),
+    );
 
-    let (sse_server, sse_router) = SseServer::new(config);
-    let router = match oauth_state {
+    let mut router = axum::Router::new().nest_service("/mcp", mcp_service);
+    router = match oauth_state {
         Some(state) => {
             tracing::info!(
                 "OAuth 2.1 support enabled (issuer: {})",
                 state.mcp_public_url
             );
-            sse_router.merge(oauth::router(state))
+            router.merge(oauth::router(state))
         }
         None => {
             tracing::info!(
                 "OAuth not configured (set OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, MCP_PUBLIC_URL, \
                  and CARDFLOW_PUBLIC_URL to enable it) -- API token bearer auth only"
             );
-            sse_router
+            router
         }
     };
 
-    let listener = tokio::net::TcpListener::bind(sse_server.config.bind).await?;
-    let ct = sse_server.config.ct.child_token();
+    let bind: SocketAddr = ([0, 0, 0, 0], mcp_port).into();
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    tracing::info!("cardflow-mcp listening on {bind}/mcp, talking to Cardflow at {cardflow_url}");
 
-    let server = axum::serve(listener, router).with_graceful_shutdown(async move {
-        ct.cancelled().await;
-        tracing::info!("mcp sse server cancelled");
-    });
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("mcp server shutting down");
+            ct.cancel();
+        })
+        .await?;
 
-    tokio::spawn(async move {
-        if let Err(e) = server.await {
-            tracing::error!(error = %e, "mcp sse server shut down with error");
-        }
-    });
-
-    tracing::info!("cardflow-mcp listening on {bind}, talking to Cardflow at {cardflow_url}");
-    let shutdown_token = sse_server.with_service(move || CardflowMcpServer::new(client.clone()));
-
-    tokio::signal::ctrl_c().await?;
-    shutdown_token.cancel();
     Ok(())
 }
 

@@ -1,5 +1,4 @@
 use rmcp::handler::server::common::{AsRequestContext, FromContextPart};
-use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
@@ -134,16 +133,12 @@ pub struct CardIdRequest {
 #[derive(Clone)]
 pub struct CardflowMcpServer {
     client: CardflowClient,
-    tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl CardflowMcpServer {
     pub fn new(client: CardflowClient) -> Self {
-        Self {
-            client,
-            tool_router: Self::tool_router(),
-        }
+        Self { client }
     }
 
     #[tool(
@@ -290,10 +285,7 @@ impl CardflowMcpServer {
 #[tool_handler]
 impl ServerHandler for CardflowMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(INSTRUCTIONS.to_string()),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(INSTRUCTIONS.to_string())
     }
 }

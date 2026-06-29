@@ -298,8 +298,9 @@ jsonwebtoken = "9"
 - Frontend proxies `/api` to backend so no CORS issues in production
 - `.env` file for secrets: `JWT_SECRET`, `DATABASE_URL`, etc.
 - `cardflow-mcp` is a separate Rust crate (`mcp/`) implementing the MCP protocol over the
-  classic SSE transport (`/sse` + `/message`), calling the backend over the internal Docker
-  network. `CARDFLOW_TOKEN` is the simple path (one static API token = one fixed identity for
+  Streamable HTTP transport (single `/mcp` endpoint, POST for requests, optional GET for
+  server-initiated streaming), calling the backend over the internal Docker network.
+  `CARDFLOW_TOKEN` is the simple path (one static API token = one fixed identity for
   every connection); OAuth (`OAUTH_CLIENT_ID`/`OAUTH_CLIENT_SECRET`/`MCP_PUBLIC_URL`/
   `CARDFLOW_PUBLIC_URL`, all-or-nothing) lets each connecting client authenticate as its own
   Cardflow user instead — both can be configured at once, and a per-connection bearer token
