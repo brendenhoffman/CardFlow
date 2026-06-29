@@ -235,6 +235,12 @@ async fn exchange_code(
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_grant: unknown code".into()))?;
 
+    if row.client_id != req.client_id.as_deref().unwrap_or_default() {
+        return Err(AppError::BadRequest(
+            "invalid_grant: client_id mismatch".into(),
+        ));
+    }
+
     let now = Utc::now();
     let code_expires_at = row.code_expires_at.as_deref().unwrap_or_default();
     if code_expires_at < now.to_rfc3339().as_str() {
@@ -254,6 +260,14 @@ async fn exchange_code(
         ));
     }
 
+    if row.code_challenge_method.as_deref() != Some("S256") {
+        // /authorize only ever stores "S256" (the only method this server
+        // advertises), so this only trips if the row is malformed somehow --
+        // pkce_verify assumes SHA-256, so check before relying on it.
+        return Err(AppError::BadRequest(
+            "invalid_grant: unsupported code_challenge_method".into(),
+        ));
+    }
     let challenge = row.code_challenge.as_deref().unwrap_or_default();
     if !pkce_verify(code_verifier, challenge) {
         return Err(AppError::BadRequest(
@@ -302,6 +316,12 @@ async fn exchange_refresh(
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| AppError::BadRequest("invalid_grant: unknown refresh_token".into()))?;
+
+    if row.client_id != req.client_id.as_deref().unwrap_or_default() {
+        return Err(AppError::BadRequest(
+            "invalid_grant: client_id mismatch".into(),
+        ));
+    }
 
     let now = Utc::now();
     let refresh_expires_at = row.refresh_expires_at.as_deref().unwrap_or_default();
