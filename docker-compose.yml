@@ -7,6 +7,15 @@ services:
     environment:
       DATABASE_URL: sqlite:///data/cardflow.db
       COOKIE_SECURE: "false"
+      # OAuth 2.1 (for claude.ai web etc. connecting to the MCP server) is
+      # optional. Leave all three unset to disable it -- existing JWT/API
+      # token auth is unaffected either way. To enable it, set the same
+      # OAUTH_CLIENT_ID/OAUTH_CLIENT_SECRET here and on cardflow-mcp below,
+      # and point CARDFLOW_PUBLIC_URL at this app's public origin (the
+      # frontend's URL, since it proxies /api/* to this backend).
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET}
+      CARDFLOW_PUBLIC_URL: ${CARDFLOW_PUBLIC_URL}
     volumes:
       - cardflow-data:/data
     ports:
@@ -26,7 +35,15 @@ services:
 
   # MCP server for AI agents. CARDFLOW_TOKEN must be created via Settings ->
   # API tokens in the running app, then set here (e.g. in a .env file) before
-  # this service can start.
+  # this service can start -- unless OAuth is configured below, in which case
+  # connecting clients (e.g. claude.ai) authenticate themselves instead and
+  # CARDFLOW_TOKEN is only used as a fallback for clients that don't.
+  #
+  # OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, MCP_PUBLIC_URL, and
+  # CARDFLOW_PUBLIC_URL must all be set together to enable OAuth 2.1 support,
+  # or all left unset to disable it (the server refuses to start if only some
+  # are set). OAUTH_CLIENT_ID/SECRET must match the values set on
+  # cardflow-backend above.
   cardflow-mcp:
     build:
       context: .
@@ -36,6 +53,10 @@ services:
       CARDFLOW_URL: http://cardflow-backend:3001
       CARDFLOW_TOKEN: ${CARDFLOW_TOKEN}
       MCP_PORT: 3778
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL}
+      CARDFLOW_PUBLIC_URL: ${CARDFLOW_PUBLIC_URL}
     depends_on:
       - cardflow-backend
     ports:

@@ -470,3 +470,20 @@ export function createApiToken(name: string): Promise<CreateApiTokenResponse> {
 export function deleteApiToken(id: string): Promise<void> {
 	return apiFetch(`/api-tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
+
+// ---------------------------------------------------------------------------
+// OAuth (authorization code + PKCE flow for external clients, e.g. the MCP server)
+// ---------------------------------------------------------------------------
+
+export interface OAuthAuthorizeResult {
+	redirect_to: string;
+}
+
+/**
+ * Completes a pending /oauth/authorize request as the now-logged-in user.
+ * `search` is the page's full query string (including the leading "?") as
+ * originally received from the OAuth client, forwarded unchanged.
+ */
+export function completeOAuthAuthorize(search: string): Promise<OAuthAuthorizeResult> {
+	return apiFetch(`/oauth/authorize${search}`);
+}

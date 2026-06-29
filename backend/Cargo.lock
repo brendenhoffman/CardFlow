@@ -247,6 +247,7 @@ dependencies = [
  "argon2",
  "axum",
  "axum-extra",
+ "base64",
  "chrono",
  "dotenvy",
  "jsonwebtoken",
@@ -262,6 +263,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

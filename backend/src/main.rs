@@ -33,6 +33,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .merge(routes::setup::router())
         .merge(routes::auth::public_router())
+        .merge(routes::oauth::router())
         .merge(protected)
         .layer(CorsLayer::permissive())
         .with_state(pool);

@@ -125,6 +125,36 @@ CREATE TABLE card_jokers (
   order INTEGER NOT NULL,                        -- sequence within this card's joker list
   UNIQUE(card_id, order)
 );
+
+-- Long-lived API tokens (e.g. for the MCP server). Only an argon2 hash is
+-- stored; the raw value is shown to the user once, at creation.
+CREATE TABLE api_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  name TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT
+);
+
+-- OAuth 2.1 (authorization code + PKCE) grants, one row per grant in flight
+-- or active. code/code_challenge/redirect_uri are cleared once exchanged;
+-- access_token/refresh_token are rotated in place on each refresh.
+CREATE TABLE oauth_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  code TEXT,                            -- null after exchange
+  code_expires_at TEXT,
+  code_challenge TEXT,                  -- PKCE S256 challenge, null after exchange
+  code_challenge_method TEXT,
+  redirect_uri TEXT,                    -- re-validated at /token, null after exchange
+  access_token TEXT,
+  access_expires_at TEXT,
+  refresh_token TEXT,
+  refresh_expires_at TEXT,
+  client_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 ```
 
 ### Constraints to enforce in application logic:
@@ -196,6 +226,26 @@ POST   /cards/:id/return           -- send hand card back to pile, clears priori
 PATCH  /decks/:deck_id/reorder     -- body: { order: [card_id, ...] } length 1-5, steps priorities 1-N in transaction
 ```
 
+### API tokens
+```
+GET    /api-tokens                 -- list current user's tokens (never returns the raw token)
+POST   /api-tokens                 -- create; raw token returned once, in this response only
+DELETE /api-tokens/:id             -- revoke
+```
+
+### OAuth 2.1 (authorization code + PKCE)
+```
+GET    /oauth/authorize            -- public. No/invalid Bearer JWT -> 302 to the frontend
+                                       login page with the request forwarded; valid Bearer JWT
+                                       -> mints a code, returns { redirect_to } as JSON (the
+                                       frontend navigates the browser there itself)
+POST   /oauth/token                -- public, client_secret_post auth. grant_type=authorization_code
+                                       (+ code_verifier, redirect_uri) or grant_type=refresh_token
+```
+Only enabled when `OAUTH_CLIENT_ID`/`OAUTH_CLIENT_SECRET`/`CARDFLOW_PUBLIC_URL` are set (errors at
+request time, not startup, if missing — these routes always exist). This is what lets the MCP
+server (see below) be added to claude.ai web as a remote connector.
+
 ## Auth Design
 
 - JWT expiry (2 hours), refresh token in HttpOnly cookie (7 days), both stored/validated against SQLite. Frontend silently refreshes the access token shortly before it expires so an open tab is never logged out before the refresh token's 7-day boundary.
@@ -206,6 +256,16 @@ PATCH  /decks/:deck_id/reorder     -- body: { order: [card_id, ...] } length 1-5
   - `admin` — can manage users, see all games
   - `owner` (per game) — can edit/delete the game, manage members, full card control
   - `member` (per game) — can view game, move/complete cards, add cards
+- `require_auth` middleware accepts any of three bearer-token flavors on the same
+  `Authorization: Bearer <value>` header, tried cheapest-first: session JWT (no extra DB hit
+  beyond the user lookup) → OAuth access token (`oauth_tokens`, exact indexed lookup, 2h TTL) →
+  API token (`api_tokens`, argon2-verify against every stored hash, since it's salted/non-deterministic
+  and can't be indexed — fine at this app's scale).
+- There is no dynamic OAuth client registration (RFC 7591) yet — exactly one client is
+  registered, statically, via the `OAUTH_CLIENT_ID`/`OAUTH_CLIENT_SECRET` env vars (set
+  identically on both `cardflow-backend` and `cardflow-mcp`). A connecting OAuth client
+  (e.g. claude.ai's custom connector setup) needs a way to be configured with that exact
+  client_id/secret.
 
 ## Cargo.toml Dependencies
 
@@ -232,11 +292,18 @@ jsonwebtoken = "9"
 
 ## Docker Setup
 
-- Two containers: `cardflow-backend` and `cardflow-frontend`
+- Three containers: `cardflow-backend`, `cardflow-frontend`, `cardflow-mcp`
 - SQLite file mounted as a named volume at `/data/cardflow.db`
-- Backend exposes port 3001, frontend exposes port 3000
+- Backend exposes port 3001, frontend exposes port 3000, mcp exposes `MCP_PORT` (default 3778)
 - Frontend proxies `/api` to backend so no CORS issues in production
 - `.env` file for secrets: `JWT_SECRET`, `DATABASE_URL`, etc.
+- `cardflow-mcp` is a separate Rust crate (`mcp/`) implementing the MCP protocol over the
+  classic SSE transport (`/sse` + `/message`), calling the backend over the internal Docker
+  network. `CARDFLOW_TOKEN` is the simple path (one static API token = one fixed identity for
+  every connection); OAuth (`OAUTH_CLIENT_ID`/`OAUTH_CLIENT_SECRET`/`MCP_PUBLIC_URL`/
+  `CARDFLOW_PUBLIC_URL`, all-or-nothing) lets each connecting client authenticate as its own
+  Cardflow user instead — both can be configured at once, and a per-connection bearer token
+  always takes priority over the static fallback.
 
 ## UI Notes
 

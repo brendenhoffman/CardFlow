@@ -24,3 +24,5 @@ axum-extra = { version = "0.9", features = ["cookie"] }
 jsonwebtoken = "9"
 sha2 = "0.10"
 time = "0.3"
+base64 = "0.22"
+url = "2"

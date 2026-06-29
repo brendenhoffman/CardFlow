@@ -1,3 +1,4 @@
+use rmcp::handler::server::common::{AsRequestContext, FromContextPart};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
@@ -21,6 +22,32 @@ Rules to follow:
 4. Card titles should be short and actionable (e.g. "Add input validation to signup form"). Descriptions should carry enough technical context that a developer could pick up the card and implement it without asking a follow-up question -- mention relevant files, functions, edge cases, or constraints when you know them.
 5. Prefer creating immediate, actionable cards over vague, big-picture ones. Only create broad/aspirational cards if the user explicitly asks for big-picture planning; default to concrete next steps.
 "#;
+
+/// Extracts the connecting client's own `Authorization: Bearer <token>` header
+/// (an API token or an OAuth access token), if any, for use as this tool
+/// call's Cardflow credentials. `rmcp`'s SSE transport attaches the original
+/// HTTP request `Parts` for each JSON-RPC message as a context extension
+/// (see `post_event_handler` in `rmcp::transport::sse_server`); this just
+/// reads it back out. Never fails -- absence is valid, since `CardflowClient`
+/// falls back to the server's static `CARDFLOW_TOKEN`, if configured.
+pub struct BearerToken(pub Option<String>);
+
+impl<C> FromContextPart<C> for BearerToken
+where
+    C: AsRequestContext,
+{
+    fn from_context_part(context: &mut C) -> Result<Self, McpError> {
+        let token = context
+            .as_request_context()
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.headers.get(axum::http::header::AUTHORIZATION))
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .map(str::to_string);
+        Ok(BearerToken(token))
+    }
+}
 
 fn ok_json(value: Value) -> Result<CallToolResult, McpError> {
     let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
@@ -122,8 +149,11 @@ impl CardflowMcpServer {
     #[tool(
         description = "List every game (top-level project) visible to this token's user. Takes no parameters. Games have no parent -- decks and cards live underneath them. Call this first to discover game_id values before listing decks."
     )]
-    async fn list_games(&self) -> Result<CallToolResult, McpError> {
-        to_result(self.client.list_games().await)
+    async fn list_games(
+        &self,
+        BearerToken(token): BearerToken,
+    ) -> Result<CallToolResult, McpError> {
+        to_result(self.client.list_games(&token).await)
     }
 
     #[tool(
@@ -132,8 +162,9 @@ impl CardflowMcpServer {
     async fn list_decks(
         &self,
         Parameters(ListDecksRequest { game_id }): Parameters<ListDecksRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
-        to_result(self.client.list_decks(&game_id).await)
+        to_result(self.client.list_decks(&token, &game_id).await)
     }
 
     #[tool(
@@ -142,8 +173,9 @@ impl CardflowMcpServer {
     async fn list_cards(
         &self,
         Parameters(ListCardsRequest { deck_id, status }): Parameters<ListCardsRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
-        match self.client.list_cards(&deck_id).await {
+        match self.client.list_cards(&token, &deck_id).await {
             Ok(Value::Array(cards)) => {
                 let filtered = match status {
                     Some(status) => cards
@@ -171,10 +203,11 @@ impl CardflowMcpServer {
             title,
             description,
         }): Parameters<CreateCardRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
         to_result(
             self.client
-                .create_card(&deck_id, &title, description.as_deref())
+                .create_card(&token, &deck_id, &title, description.as_deref())
                 .await,
         )
     }
@@ -189,13 +222,14 @@ impl CardflowMcpServer {
             title,
             description,
         }): Parameters<UpdateCardRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
         if title.is_none() && description.is_none() {
             return err_text("provide at least one of title or description to update");
         }
         to_result(
             self.client
-                .update_card(&card_id, title.as_deref(), description.as_deref())
+                .update_card(&token, &card_id, title.as_deref(), description.as_deref())
                 .await,
         )
     }
@@ -210,8 +244,13 @@ impl CardflowMcpServer {
             joker_id,
             order,
         }): Parameters<AddJokerRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
-        to_result(self.client.add_joker(&card_id, &joker_id, order).await)
+        to_result(
+            self.client
+                .add_joker(&token, &card_id, &joker_id, order)
+                .await,
+        )
     }
 
     #[tool(
@@ -220,8 +259,9 @@ impl CardflowMcpServer {
     async fn remove_joker(
         &self,
         Parameters(RemoveJokerRequest { card_id, joker_id }): Parameters<RemoveJokerRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
-        to_result(self.client.remove_joker(&card_id, &joker_id).await)
+        to_result(self.client.remove_joker(&token, &card_id, &joker_id).await)
     }
 
     #[tool(
@@ -230,8 +270,9 @@ impl CardflowMcpServer {
     async fn complete_card(
         &self,
         Parameters(CardIdRequest { card_id }): Parameters<CardIdRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
-        to_result(self.client.complete_card(&card_id).await)
+        to_result(self.client.complete_card(&token, &card_id).await)
     }
 
     #[tool(
@@ -240,8 +281,9 @@ impl CardflowMcpServer {
     async fn return_card(
         &self,
         Parameters(CardIdRequest { card_id }): Parameters<CardIdRequest>,
+        BearerToken(token): BearerToken,
     ) -> Result<CallToolResult, McpError> {
-        to_result(self.client.return_card(&card_id).await)
+        to_result(self.client.return_card(&token, &card_id).await)
     }
 }
 

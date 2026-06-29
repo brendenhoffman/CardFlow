@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use chrono::Utc;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,9 @@ use crate::models::User;
 
 pub const ACCESS_TOKEN_TTL_SECONDS: i64 = 2 * 60 * 60;
 pub const REFRESH_TOKEN_TTL_DAYS: i64 = 7;
+pub const OAUTH_CODE_TTL_SECONDS: i64 = 5 * 60;
+pub const OAUTH_ACCESS_TOKEN_TTL_SECONDS: i64 = 2 * 60 * 60;
+pub const OAUTH_REFRESH_TOKEN_TTL_DAYS: i64 = 7;
 const TOTP_ISSUER: &str = "CardFlow";
 const JWT_SECRET_FILENAME: &str = ".jwt_secret";
 
@@ -174,4 +179,26 @@ pub fn check_totp(secret_base32: &str, username: &str, code: &str) -> Result<boo
     let totp = build_totp(secret_bytes, username)?;
     totp.check_current(code)
         .map_err(|e| AppError::Internal(format!("failed to check totp code: {e}")))
+}
+
+/// Constant-time comparison for opaque secrets (OAuth client_secret, PKCE
+/// challenge) — these are compared directly rather than via a salted hash, so
+/// a naive `==` would leak timing information about how many leading bytes
+/// matched.
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
+/// RFC 7636 PKCE check: does `verifier` hash (S256) to the `challenge` issued
+/// at /oauth/authorize?
+pub fn pkce_verify(verifier: &str, challenge: &str) -> bool {
+    let computed = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    constant_time_eq(&computed, challenge)
 }

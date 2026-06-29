@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use crate::auth::{jwt_secret, verify_access_token, verify_password, CurrentUser};
 use crate::errors::AppError;
-use crate::models::ApiToken;
+use crate::models::{ApiToken, OauthToken};
 
 pub async fn require_auth(
     State(pool): State<SqlitePool>,
@@ -24,13 +24,17 @@ pub async fn require_auth(
         AppError::Unauthorized("authorization header must be a bearer token".into())
     })?;
 
-    // JWTs and API tokens share the same `Authorization: Bearer <value>` header.
-    // A short-lived session JWT is the common case, so try that first; anything
-    // that isn't a validly-signed JWT (including long-lived API tokens, which
-    // are opaque random strings) falls through to the API token check.
+    // Three bearer-token flavors share the same `Authorization: Bearer <value>`
+    // header. Ordered cheapest-first: a short-lived session JWT needs no DB
+    // hit beyond the user lookup (common case, tried first); an OAuth access
+    // token is an exact-match indexed lookup; a long-lived API token requires
+    // scanning and argon2-verifying every stored hash (slowest, tried last).
     let current = match authenticate_jwt(&pool, token).await {
         Ok(current) => current,
-        Err(_) => authenticate_api_token(&pool, token).await?,
+        Err(_) => match authenticate_oauth_token(&pool, token).await {
+            Ok(current) => current,
+            Err(_) => authenticate_api_token(&pool, token).await?,
+        },
     };
 
     req.extensions_mut().insert(current);
@@ -52,6 +56,36 @@ async fn authenticate_jwt(pool: &SqlitePool, token: &str) -> Result<CurrentUser,
 
     Ok(CurrentUser {
         id: claims.sub,
+        username,
+        role,
+    })
+}
+
+/// OAuth access tokens are short-lived (2h) opaque random strings stored
+/// plaintext, so unlike API tokens they're looked up by an exact, indexed
+/// match rather than a scan-and-verify.
+async fn authenticate_oauth_token(pool: &SqlitePool, token: &str) -> Result<CurrentUser, AppError> {
+    let row = sqlx::query_as::<_, OauthToken>("SELECT * FROM oauth_tokens WHERE access_token = ?")
+        .bind(token)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("invalid bearer token".into()))?;
+
+    let now = Utc::now().to_rfc3339();
+    if row.access_expires_at.as_deref().unwrap_or_default() < now.as_str() {
+        return Err(AppError::Unauthorized("oauth access token expired".into()));
+    }
+
+    let user_row =
+        sqlx::query_as::<_, (String, String)>("SELECT username, role FROM users WHERE id = ?")
+            .bind(&row.user_id)
+            .fetch_optional(pool)
+            .await?;
+    let (username, role) =
+        user_row.ok_or_else(|| AppError::Unauthorized("user no longer exists".into()))?;
+
+    Ok(CurrentUser {
+        id: row.user_id,
         username,
         role,
     })
